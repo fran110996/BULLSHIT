@@ -1,0 +1,31 @@
+# ========== UNITY ==========
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+UserSettings/
+
+# ========== IDEs ==========
+.vs/
+.vscode/
+.idea/
+
+# Visual Studio / Rider / Unity
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.opendb
+*.VC.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+.vsconfig
+steam_appid.txt
+*.txt

@@ -221,15 +221,15 @@ public class NetworkPlayerController : NetworkBehaviour
         if (IsGrounded && velocity.y < 0f)
             velocity.y = -2f;
 
-        InputH = Input.GetAxis("Horizontal");
-        InputV = Input.GetAxis("Vertical");
+        InputH = Input.GetAxisRaw("Horizontal");
+        InputV = Input.GetAxisRaw("Vertical");
         RawInputH = Input.GetAxisRaw("Horizontal");
         RawInputV = Input.GetAxisRaw("Vertical");
         IsSprinting = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
         float currentSpeed = IsSprinting ? runSpeed : walkSpeed;
 
-        Vector3 move = transform.right * InputH + transform.forward * InputV;
+        Vector3 move = transform.right * RawInputH + transform.forward * RawInputV;
         if (move.magnitude > 1f) move.Normalize();
 
         controller.Move(move * currentSpeed * Time.deltaTime);

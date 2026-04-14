@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using Unity.Services.Vivox;
 using System.Threading.Tasks;
 using System.Collections.Generic;
@@ -13,6 +13,8 @@ public class VoiceManager : MonoBehaviour
     private bool isMuted = false;
     private bool isInChannel = false;
     private bool isJoining = false;
+    private string currentChannelName = "";
+    
     private Dictionary<string, NetworkPlayerController> playersByName = new Dictionary<string, NetworkPlayerController>();
     private NetworkPlayerController localPlayer;
 
@@ -27,72 +29,76 @@ public class VoiceManager : MonoBehaviour
     {
         try
         {
+            // Solo inicializar si no esta inicializado
             await VivoxService.Instance.InitializeAsync();
-            Debug.Log("Vivox inicializado");
+            Debug.Log("Vivox inicializado correctamente");
         }
         catch (System.Exception e)
         {
-            Debug.LogWarning($"Vivox no disponible: {e.Message}");
+            Debug.LogWarning($"Vivox inicializacion: {e.Message}");
         }
+    }
+
+    public void SetLocalPlayer(NetworkPlayerController player)
+    {
+        localPlayer = player;
+        Debug.Log("VoiceManager: Jugador local registrado.");
     }
 
     public async Task JoinVoiceChannel(string roomName)
     {
-        if (isInChannel || isJoining)
+        if (isInChannel && currentChannelName == roomName)
         {
-            Debug.Log("Ya estamos en el canal o uniendose, ignorando");
+            Debug.Log("Ya estamos en este canal, ignorando.");
             return;
         }
 
+        if (isJoining) return;
         isJoining = true;
 
         try
         {
-            try
+            // 1. Limpiar eventos previos por seguridad
+            VivoxService.Instance.ParticipantAddedToChannel -= OnParticipantAdded;
+            VivoxService.Instance.ParticipantRemovedFromChannel -= OnParticipantRemoved;
+
+            // 2. Login si es necesario (NGO suele usar ID anonimo de Unity Services)
+            // VivoxService maneja el login internamente o mediante LoginAsync
+            // En versiones modernas de Vivox SDK para Unity, Join dispara el login si hace falta.
+
+            // 3. Salir de canales previos si hay alguno
+            if (isInChannel)
             {
-                VivoxService.Instance.ParticipantAddedToChannel -= OnParticipantAdded;
-                VivoxService.Instance.ParticipantRemovedFromChannel -= OnParticipantRemoved;
+                await LeaveVoiceChannel();
             }
-            catch { }
 
-            try
-            {
-                await VivoxService.Instance.LeaveAllChannelsAsync();
-                await Task.Delay(1000);
-            }
-            catch { }
-
-            try
-            {
-                await VivoxService.Instance.LogoutAsync();
-                await Task.Delay(500);
-            }
-            catch { }
-
-            await VivoxService.Instance.InitializeAsync();
-            await Task.Delay(500);
-
+            // 4. Configurar canal 3D
             var properties = new Channel3DProperties(
-                32,
-                1,
-                1f,
+                32, // Distancia maxima razonable
+                1,  // Distancia de audicion completa
+                1f, // Roll-off
                 AudioFadeModel.LinearByDistance);
 
+            currentChannelName = roomName;
+            
             await VivoxService.Instance.JoinPositionalChannelAsync(
                 roomName,
                 ChatCapability.AudioOnly,
                 properties);
 
             isInChannel = true;
-            Debug.Log($"Unido al canal de voz: {roomName}");
-
+            
+            // 5. Suscribir eventos
             VivoxService.Instance.ParticipantAddedToChannel += OnParticipantAdded;
             VivoxService.Instance.ParticipantRemovedFromChannel += OnParticipantRemoved;
+            
+            Debug.Log($"Conectado al canal de voz: {roomName}");
         }
         catch (System.Exception e)
         {
             isInChannel = false;
-            Debug.LogWarning($"Error uniendose al canal: {e.Message}");
+            currentChannelName = "";
+            Debug.LogError($"Error al unirse al canal de voz: {e.Message}");
         }
         finally
         {
@@ -106,16 +112,15 @@ public class VoiceManager : MonoBehaviour
         {
             VivoxService.Instance.ParticipantAddedToChannel -= OnParticipantAdded;
             VivoxService.Instance.ParticipantRemovedFromChannel -= OnParticipantRemoved;
+            
             await VivoxService.Instance.LeaveAllChannelsAsync();
+            isInChannel = false;
+            currentChannelName = "";
+            Debug.Log("Salimos del canal de voz.");
         }
         catch (System.Exception e)
         {
-            Debug.LogWarning($"Error saliendo del canal: {e.Message}");
-        }
-        finally
-        {
-            isInChannel = false;
-            isJoining = false;
+            Debug.LogWarning($"Vivox Leave error: {e.Message}");
         }
     }
 
@@ -129,32 +134,20 @@ public class VoiceManager : MonoBehaviour
 
     void UpdateVivoxPosition()
     {
-        if (!isInChannel) return;
+        // Solo actualizamos posicion si estamos en canal y tenemos la referencia al localPlayer
+        if (!isInChannel || localPlayer == null || string.IsNullOrEmpty(currentChannelName)) return;
 
-        // Buscar solo una vez
-        if (localPlayer == null)
-        {
-            var players = FindObjectsOfType<NetworkPlayerController>();
-            foreach (var p in players)
-            {
-                if (p.IsOwner) { localPlayer = p; break; }
-            }
-        }
-
-        if (localPlayer == null) return;
-
+        // Vivox necesita saber donde estamos para el audio 3D
         VivoxService.Instance.Set3DPosition(
-            localPlayer.transform.position,
-            localPlayer.transform.position,
-            localPlayer.transform.forward,
-            localPlayer.transform.up,
-            "GameRoom");
+            localPlayer.transform.position,    // Posicion del hablante
+            localPlayer.transform.position,    // Posicion del oyente (usamos la misma porque es FPS)
+            localPlayer.transform.forward,     // Hacia donde miramos
+            localPlayer.transform.up,          // Arriba
+            currentChannelName);
     }
 
     void ToggleMute()
     {
-        if (!isInChannel) return;
-
         isMuted = !isMuted;
 
         if (isMuted)
@@ -162,20 +155,25 @@ public class VoiceManager : MonoBehaviour
         else
             VivoxService.Instance.UnmuteInputDevice();
 
-        Debug.Log(isMuted ? "Microfono muteado" : "Microfono activado");
+        Debug.Log(isMuted ? "Microfono Muteado" : "Microfono Activo");
+        
+        // Actualizar UI si existe
         UIVoice.Instance?.SetMuteIcon(isMuted);
     }
 
     public void RegisterPlayer(string playerName, NetworkPlayerController controller)
     {
         if (!playersByName.ContainsKey(playerName))
+        {
             playersByName[playerName] = controller;
+            Debug.Log($"Voz: Jugador {playerName} mapeado a su controlador.");
+        }
     }
 
     private void OnParticipantAdded(VivoxParticipant participant)
     {
         participant.ParticipantSpeechDetected += () => OnSpeechChanged(participant);
-        Debug.Log($"Participante en canal: {participant.DisplayName}");
+        Debug.Log($"Voz: Entro participante {participant.DisplayName}");
     }
 
     private void OnParticipantRemoved(VivoxParticipant participant)
@@ -190,7 +188,11 @@ public class VoiceManager : MonoBehaviour
     private void OnSpeechChanged(VivoxParticipant participant)
     {
         bool speaking = participant.SpeechDetected && !participant.IsMuted;
+        
+        // Si tenemos al jugador mapeado, avisamos al controlador para que anime el nombre/icono
         if (playersByName.TryGetValue(participant.DisplayName, out var controller))
+        {
             controller.SetSpeaking(speaking);
+        }
     }
 }

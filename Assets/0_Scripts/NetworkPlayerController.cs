@@ -1,12 +1,14 @@
 using UnityEngine;
 using Unity.Netcode;
+using Unity.Collections;
 using TMPro;
 
 [RequireComponent(typeof(CharacterController))]
 public class NetworkPlayerController : NetworkBehaviour
 {
     [Header("Movimiento")]
-    public float moveSpeed = 5f;
+    public float walkSpeed = 3.5f;
+    public float runSpeed = 6.5f;
     public float jumpForce = 2f;
     public float gravity = -20f;
 
@@ -19,12 +21,36 @@ public class NetworkPlayerController : NetworkBehaviour
     public GameObject bodyMesh;
     public GameObject floatingNamePrefab;
 
-    public string PlayerName { get; private set; }
+    // --- Propiedades publicas para el sistema de animacion ---
+    public float InputH { get; private set; }
+    public float InputV { get; private set; }
+    public float RawInputH { get; private set; }
+    public float RawInputV { get; private set; }
+    public bool IsGrounded { get; private set; }
+    public bool IsJumping { get; private set; }
+    public bool IsSprinting { get; private set; }
+
+    // Sincronizacion robusta del nombre
+    public NetworkVariable<FixedString32Bytes> NetworkPlayerName = new NetworkVariable<FixedString32Bytes>(
+        "",
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
+
+    // --- NetworkVariables para sincronizar animaciones ---
+    // El Server escribe (via ServerRpc del owner), todos leen
+    public NetworkVariable<float> NetMoveX = new NetworkVariable<float>(0f);
+    public NetworkVariable<float> NetMoveZ = new NetworkVariable<float>(0f);
+    public NetworkVariable<bool> NetIsGrounded = new NetworkVariable<bool>(true);
+    public NetworkVariable<bool> NetIsJumping = new NetworkVariable<bool>(false);
+
+    public string PlayerName => NetworkPlayerName.Value.ToString();
 
     private CharacterController controller;
     private Vector3 velocity;
     private float xRotation = 0f;
     private FloatingName floatingNameInstance;
+    private bool wasGrounded = true;
 
     void Awake()
     {
@@ -48,6 +74,8 @@ public class NetworkPlayerController : NetworkBehaviour
     {
         Debug.Log($"OnNetworkSpawn - IsOwner: {IsOwner}, OwnerClientId: {OwnerClientId}");
 
+        NetworkPlayerName.OnValueChanged += OnNameChanged;
+
         if (!IsOwner)
         {
             if (cameraHolder != null)
@@ -55,10 +83,17 @@ public class NetworkPlayerController : NetworkBehaviour
                 Camera cam = cameraHolder.GetComponentInChildren<Camera>();
                 if (cam != null) cam.gameObject.SetActive(false);
             }
-            enabled = false;
+
+            if (!string.IsNullOrEmpty(NetworkPlayerName.Value.ToString()))
+            {
+                UpdatePlayerVisuals(NetworkPlayerName.Value.ToString());
+            }
+
+            // NO desactivamos enabled, dejamos Update corriendo para leer NetworkVariables
             return;
         }
 
+        // --- SOLO PARA EL OWNER ---
         if (cameraHolder != null)
         {
             Camera cam = cameraHolder.GetComponentInChildren<Camera>();
@@ -67,56 +102,99 @@ public class NetworkPlayerController : NetworkBehaviour
 
         if (bodyMesh != null) bodyMesh.SetActive(false);
 
-        enabled = true;
         Cursor.lockState = CursorLockMode.Confined;
         Cursor.visible = false;
 
-        JoinVoiceAsync();
+        if (VoiceManager.Instance != null)
+        {
+            VoiceManager.Instance.SetLocalPlayer(this);
+            JoinVoiceAsync();
+        }
 
-        string steamName = Steamworks.SteamFriends.GetPersonaName();
-        SetNameServerRpc(steamName);
+        string finalName = "Player_" + Random.Range(100, 999);
+        
+        if (GameInitializer.Instance != null && GameInitializer.Instance.IsSteamAvailable)
+        {
+            finalName = Steamworks.SteamFriends.GetPersonaName();
+        }
+        
+        SetNameServerRpc(finalName);
     }
 
-    private async void JoinVoiceAsync()
+    public override void OnNetworkDespawn()
     {
-        await System.Threading.Tasks.Task.Delay(1000);
-        await VoiceManager.Instance.JoinVoiceChannel("GameRoom");
+        NetworkPlayerName.OnValueChanged -= OnNameChanged;
     }
 
-    [ServerRpc]
-    private void SetNameServerRpc(string name)
+    private void OnNameChanged(FixedString32Bytes oldName, FixedString32Bytes newName)
     {
-        SetNameClientRpc(name);
+        UpdatePlayerVisuals(newName.ToString());
     }
 
-    [ClientRpc]
-    private void SetNameClientRpc(string name)
+    private void UpdatePlayerVisuals(string name)
     {
-        Debug.Log($"SetNameClientRpc recibido - nombre: {name}, IsOwner: {IsOwner}");
-        PlayerName = name;
-
+        Debug.Log($"Actualizando visuales para: {name}, IsOwner: {IsOwner}");
+        
         if (IsOwner) return;
 
         var fn = GetOrCreateFloatingName();
         if (fn != null)
         {
-            Debug.Log($"Inicializando FloatingName con: {name}");
             fn.Initialize(transform, name);
-        }
-        else
-        {
-            Debug.LogError($"No se pudo crear FloatingName para: {name}, floatingNamePrefab es null");
         }
 
         VoiceManager.Instance?.RegisterPlayer(name, this);
     }
 
+    private async void JoinVoiceAsync()
+    {
+        await System.Threading.Tasks.Task.Delay(500);
+        if (VoiceManager.Instance != null)
+            await VoiceManager.Instance.JoinVoiceChannel("GameRoom");
+    }
+
+    [ServerRpc]
+    private void SetNameServerRpc(string name)
+    {
+        NetworkPlayerName.Value = name;
+    }
+
+    [ServerRpc]
+    private void SyncAnimationServerRpc(float moveX, float moveZ, bool grounded, bool jumping)
+    {
+        NetMoveX.Value = moveX;
+        NetMoveZ.Value = moveZ;
+        NetIsGrounded.Value = grounded;
+        NetIsJumping.Value = jumping;
+    }
+
     void Update()
     {
-        if (!IsOwner) return;
-        HandleLook();
-        HandleMovement();
-        HandleCursorToggle();
+        if (IsOwner)
+        {
+            HandleLook();
+            HandleMovement();
+            HandleCursorToggle();
+
+            // Calcular valores de animacion y enviar al server
+            float rawH = RawInputH;
+            float rawV = RawInputV;
+            float targetMoveX, targetMoveZ;
+
+            if (IsSprinting && (Mathf.Abs(rawH) > 0.01f || Mathf.Abs(rawV) > 0.01f))
+            {
+                targetMoveX = rawH;
+                targetMoveZ = Mathf.Clamp(rawV * 2f, -1f, 1f);
+            }
+            else
+            {
+                targetMoveX = rawH * 0.5f;
+                targetMoveZ = rawV * 0.5f;
+            }
+
+            // Enviar al servidor para que todos vean las animaciones
+            SyncAnimationServerRpc(targetMoveX, targetMoveZ, IsGrounded, IsJumping);
+        }
     }
 
     void HandleLook()
@@ -132,21 +210,35 @@ public class NetworkPlayerController : NetworkBehaviour
 
     void HandleMovement()
     {
-        bool grounded = controller.isGrounded;
+        IsGrounded = controller.isGrounded;
 
-        if (grounded && velocity.y < 0f)
+        if (IsGrounded && !wasGrounded)
+        {
+            IsJumping = false;
+        }
+        wasGrounded = IsGrounded;
+
+        if (IsGrounded && velocity.y < 0f)
             velocity.y = -2f;
 
-        float h = Input.GetAxis("Horizontal");
-        float v = Input.GetAxis("Vertical");
+        InputH = Input.GetAxis("Horizontal");
+        InputV = Input.GetAxis("Vertical");
+        RawInputH = Input.GetAxisRaw("Horizontal");
+        RawInputV = Input.GetAxisRaw("Vertical");
+        IsSprinting = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
-        Vector3 move = transform.right * h + transform.forward * v;
+        float currentSpeed = IsSprinting ? runSpeed : walkSpeed;
+
+        Vector3 move = transform.right * InputH + transform.forward * InputV;
         if (move.magnitude > 1f) move.Normalize();
 
-        controller.Move(move * moveSpeed * Time.deltaTime);
+        controller.Move(move * currentSpeed * Time.deltaTime);
 
-        if (Input.GetButtonDown("Jump") && grounded)
+        if (Input.GetButtonDown("Jump") && IsGrounded)
+        {
             velocity.y = Mathf.Sqrt(jumpForce * -2f * gravity);
+            IsJumping = true;
+        }
 
         velocity.y += gravity * Time.deltaTime;
         controller.Move(velocity * Time.deltaTime);

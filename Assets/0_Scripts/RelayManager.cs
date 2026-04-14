@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using Unity.Services.Relay;
 using Unity.Services.Relay.Models;
 using Unity.Netcode;
@@ -24,11 +24,9 @@ public class RelayManager : MonoBehaviour
     {
         try
         {
-
             expectedPlayers = maxConnections + 1;
             Debug.Log($"maxConnections: {maxConnections}, expectedPlayers: {expectedPlayers}");
 
-            // Si estas solo, expectedPlayers = 1
             if (expectedPlayers < 1) expectedPlayers = 1;
 
             Allocation allocation = await RelayService.Instance
@@ -52,7 +50,6 @@ public class RelayManager : MonoBehaviour
             SteamLobbyManager.Instance.SetRelayCode(joinCode);
             NetworkManager.Singleton.StartHost();
 
-            // Esperar a que todos los clientes se conecten antes de cargar la escena
             StartCoroutine(WaitForPlayersAndLoad());
 
             return joinCode;
@@ -64,6 +61,33 @@ public class RelayManager : MonoBehaviour
         }
     }
 
+    // --- MODOS LOCALES PARA TESTEO RAPIDO ---
+    
+    public void StartLocalHost()
+    {
+        var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+        // Resetear a modo IP directo (localhost)
+        transport.SetConnectionData("127.0.0.1", 7777);
+        
+        Debug.Log("Iniciando Host Local (Localhost:7777)...");
+        NetworkManager.Singleton.StartHost();
+        
+        // Cargar escena de juego inmediatamente sin esperar mas gente
+        NetworkManager.Singleton.SceneManager.LoadScene("1_GameScene", 
+            UnityEngine.SceneManagement.LoadSceneMode.Single);
+            
+        JoinVoiceAsync();
+    }
+
+    public void StartLocalClient()
+    {
+        var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+        transport.SetConnectionData("127.0.0.1", 7777);
+        
+        Debug.Log("Uniendose a Host Local (127.0.0.1:7777)...");
+        NetworkManager.Singleton.StartClient();
+    }
+
     private IEnumerator WaitForPlayersAndLoad()
     {
         if (expectedPlayers <= 1)
@@ -72,7 +96,6 @@ public class RelayManager : MonoBehaviour
             NetworkManager.Singleton.SceneManager.LoadScene("1_GameScene",
                 UnityEngine.SceneManagement.LoadSceneMode.Single);
 
-            // Unirse al canal de voz sin await (fire and forget)
             JoinVoiceAsync();
             yield break;
         }
@@ -101,7 +124,8 @@ public class RelayManager : MonoBehaviour
 
     private async void JoinVoiceAsync()
     {
-        await VoiceManager.Instance.JoinVoiceChannel("GameRoom");
+        if (VoiceManager.Instance != null)
+            await VoiceManager.Instance.JoinVoiceChannel("GameRoom");
     }
 
     public async void JoinRelay(string joinCode)

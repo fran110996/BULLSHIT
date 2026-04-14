@@ -5,13 +5,13 @@ public class FloatingName : MonoBehaviour
 {
     public TextMeshProUGUI nameText;
     private Transform target;
-    private Vector3 offset = Vector3.up * 2.5f;
+    private Vector3 offset = Vector3.up * 6f;
 
     public void Initialize(Transform playerTransform, string name)
     {
         target = playerTransform;
         nameText.text = name;
-        // Posicionar inmediatamente para que no aparezca en otro lado
+        nameText.alignment = TextAlignmentOptions.Center;
         transform.position = playerTransform.position + offset;
     }
 
@@ -30,11 +30,17 @@ public class FloatingName : MonoBehaviour
 
         transform.position = target.position + offset;
 
-        if (Camera.main != null)
+        // Intentamos obtener la camara de forma mas robusta
+        Camera cam = Camera.main;
+        if (cam == null)
         {
-            // Mirar HACIA la camara, no en la misma dirección
-            transform.LookAt(Camera.main.transform);
-            transform.Rotate(0, 180f, 0); // Dar vuelta para que el texto quede de frente
+            cam = FindFirstObjectByType<Camera>();
+        }
+
+        if (cam != null)
+        {
+            // Alineamos el frente del objeto con el frente de la camara
+            transform.forward = cam.transform.forward;
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using Steamworks;
@@ -79,12 +79,21 @@ public class LobbyUIManager : MonoBehaviour
         isReady = !isReady;
         readyButtonText.text = isReady ? "¡LISTO!" : "LISTO?";
         SteamLobbyManager.Instance.SetMemberReady(isReady);
+        
+        // Refrescar localmente para feedback instantaneo
+        RefreshPlayerList();
     }
 
     void OnClickStart()
     {
         // En modo Steam, el host decide cuando empezar
-        RelayManager.Instance.CreateRelay(4);
+        int currentMembers = 1;
+        if (GameInitializer.Instance != null && GameInitializer.Instance.IsSteamAvailable)
+        {
+            currentMembers = SteamMatchmaking.GetNumLobbyMembers(SteamLobbyManager.Instance.CurrentLobbyID);
+        }
+        
+        RelayManager.Instance.CreateRelay(4, currentMembers);
     }
 
     public void OnLobbyReady()
@@ -105,25 +114,46 @@ public class LobbyUIManager : MonoBehaviour
             var members = SteamLobbyManager.Instance.GetMembers();
             CSteamID hostId = SteamMatchmaking.GetLobbyOwner(SteamLobbyManager.Instance.CurrentLobbyID);
             
+            int readyCount = 0;
             foreach (var m in members)
             {
                 GameObject card = Instantiate(playerCardPrefab, playerListContainer);
                 var cardScript = card.GetComponent<PlayerCardUI>();
                 
-                string name = m == SteamUser.GetSteamID() ? "Yo" : SteamFriends.GetFriendPersonaName(m);
+                string name = SteamFriends.GetFriendPersonaName(m);
                 bool ready = SteamLobbyManager.Instance.IsMemberReady(m);
                 bool isHost = m == hostId;
+                Texture2D avatar = SteamLobbyManager.GetSteamAvatar(m);
                 
+                if (ready || isHost) readyCount++;
+
                 if (cardScript != null)
                 {
-                    cardScript.Configure(name, ready, isHost);
+                    cardScript.Configure(name, ready, isHost, avatar);
                 }
             }
 
-            if (SteamLobbyManager.Instance.IsHost)
+            // Actualizar texto de estado: Listos X/Y
+            if (lobbyStatusText != null)
+            {
+                lobbyStatusText.text = $"Jugadores: {members.Count} - Listos: {readyCount}/{members.Count}";
+            }
+
+            // Configurar botones segun rol (Host vs Cliente)
+            bool amIHost = SteamLobbyManager.Instance.IsHost;
+            
+            if (amIHost)
             {
                 startButton.gameObject.SetActive(true);
+                readyButton.gameObject.SetActive(false); // El host no necesita boton de ready
+                
+                // El host siempre puede iniciar si todos los demas estan listos
                 startButton.interactable = SteamLobbyManager.Instance.AllReady();
+            }
+            else
+            {
+                startButton.gameObject.SetActive(false);
+                readyButton.gameObject.SetActive(true);
             }
         }
         else

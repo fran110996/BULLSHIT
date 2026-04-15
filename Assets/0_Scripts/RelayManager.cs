@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using Unity.Services.Relay;
 using Unity.Services.Relay.Models;
 using Unity.Netcode;
@@ -20,14 +20,13 @@ public class RelayManager : MonoBehaviour
         DontDestroyOnLoad(gameObject);
     }
 
-    public async Task<string> CreateRelay(int maxConnections)
+    public async Task<string> CreateRelay(int maxConnections, int targetPlayers = -1)
     {
         try
         {
-            expectedPlayers = maxConnections + 1;
+            // Si no se especifica targetPlayers, usamos el maxConnections + 1
+            expectedPlayers = targetPlayers > 0 ? targetPlayers : maxConnections + 1;
             Debug.Log($"maxConnections: {maxConnections}, expectedPlayers: {expectedPlayers}");
-
-            if (expectedPlayers < 1) expectedPlayers = 1;
 
             Allocation allocation = await RelayService.Instance
                 .CreateAllocationAsync(maxConnections);
@@ -92,7 +91,7 @@ public class RelayManager : MonoBehaviour
     {
         if (expectedPlayers <= 1)
         {
-            Debug.Log("Solo un jugador, cargando directo...");
+            Debug.Log("✓ Iniciando en solitario. Cargando GameScene...");
             NetworkManager.Singleton.SceneManager.LoadScene("1_GameScene",
                 UnityEngine.SceneManagement.LoadSceneMode.Single);
 
@@ -100,23 +99,30 @@ public class RelayManager : MonoBehaviour
             yield break;
         }
 
-        Debug.Log($"Esperando {expectedPlayers} jugadores...");
-        float timeout = 5f;
+        Debug.Log($"⌛ Esperando a que se conecten {expectedPlayers} jugadores (incluyendo Host)...");
+        float timeout = 10f; // Aumentamos un poco el timeout por si el relay va lento
 
         while (timeout > 0)
         {
             int connected = NetworkManager.Singleton.ConnectedClientsList.Count;
+            Debug.Log($"Sincronización de red: {connected}/{expectedPlayers} jugadores conectados.");
+
             if (connected >= expectedPlayers)
             {
+                Debug.Log("✓ Todos los jugadores conectados. Cargando GameScene para todos...");
+                // Pequeña espera extra para asegurar que el apretón de manos de Netcode terminó
+                yield return new WaitForSeconds(0.5f);
+                
                 NetworkManager.Singleton.SceneManager.LoadScene("1_GameScene",
                     UnityEngine.SceneManagement.LoadSceneMode.Single);
                 JoinVoiceAsync();
                 yield break;
             }
-            timeout -= 1f;
-            yield return new WaitForSeconds(1f);
+            timeout -= 0.5f;
+            yield return new WaitForSeconds(0.5f);
         }
 
+        Debug.LogWarning("⚠ El tiempo de espera expiró, pero cargando escena de todos modos con los jugadores que hay.");
         NetworkManager.Singleton.SceneManager.LoadScene("1_GameScene",
             UnityEngine.SceneManagement.LoadSceneMode.Single);
         JoinVoiceAsync();

@@ -20,6 +20,8 @@ public class NetworkPlayerController : NetworkBehaviour
     [Header("Referencias")]
     public GameObject bodyMesh;
     public GameObject floatingNamePrefab;
+    public PhotoCameraSystem cameraSystem;
+    public PlayerInteraction interactionSystem;
 
     // --- Propiedades publicas para el sistema de animacion ---
     public float InputH { get; private set; }
@@ -38,7 +40,6 @@ public class NetworkPlayerController : NetworkBehaviour
     );
 
     // --- NetworkVariables para sincronizar animaciones ---
-    // El Server escribe (via ServerRpc del owner), todos leen
     public NetworkVariable<float> NetMoveX = new NetworkVariable<float>(0f);
     public NetworkVariable<float> NetMoveZ = new NetworkVariable<float>(0f);
     public NetworkVariable<bool> NetIsGrounded = new NetworkVariable<bool>(true);
@@ -72,9 +73,13 @@ public class NetworkPlayerController : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        Debug.Log($"OnNetworkSpawn - IsOwner: {IsOwner}, OwnerClientId: {OwnerClientId}");
-
         NetworkPlayerName.OnValueChanged += OnNameChanged;
+
+        // Forzar actualizacion inicial si ya tiene nombre (ej: el host cuando entra un cliente)
+        if (!string.IsNullOrEmpty(NetworkPlayerName.Value.ToString()))
+        {
+            UpdatePlayerVisuals(NetworkPlayerName.Value.ToString());
+        }
 
         if (!IsOwner)
         {
@@ -83,17 +88,9 @@ public class NetworkPlayerController : NetworkBehaviour
                 Camera cam = cameraHolder.GetComponentInChildren<Camera>();
                 if (cam != null) cam.gameObject.SetActive(false);
             }
-
-            if (!string.IsNullOrEmpty(NetworkPlayerName.Value.ToString()))
-            {
-                UpdatePlayerVisuals(NetworkPlayerName.Value.ToString());
-            }
-
-            // NO desactivamos enabled, dejamos Update corriendo para leer NetworkVariables
             return;
         }
 
-        // --- SOLO PARA EL OWNER ---
         if (cameraHolder != null)
         {
             Camera cam = cameraHolder.GetComponentInChildren<Camera>();
@@ -102,17 +99,10 @@ public class NetworkPlayerController : NetworkBehaviour
 
         if (bodyMesh != null) bodyMesh.SetActive(false);
 
-        Cursor.lockState = CursorLockMode.Confined;
+        Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
 
-        if (VoiceManager.Instance != null)
-        {
-            VoiceManager.Instance.SetLocalPlayer(this);
-            JoinVoiceAsync();
-        }
-
         string finalName = "Player_" + Random.Range(100, 999);
-        
         if (GameInitializer.Instance != null && GameInitializer.Instance.IsSteamAvailable)
         {
             finalName = Steamworks.SteamFriends.GetPersonaName();
@@ -133,8 +123,6 @@ public class NetworkPlayerController : NetworkBehaviour
 
     private void UpdatePlayerVisuals(string name)
     {
-        Debug.Log($"Actualizando visuales para: {name}, IsOwner: {IsOwner}");
-        
         if (IsOwner) return;
 
         var fn = GetOrCreateFloatingName();
@@ -142,15 +130,6 @@ public class NetworkPlayerController : NetworkBehaviour
         {
             fn.Initialize(transform, name);
         }
-
-        VoiceManager.Instance?.RegisterPlayer(name, this);
-    }
-
-    private async void JoinVoiceAsync()
-    {
-        await System.Threading.Tasks.Task.Delay(500);
-        if (VoiceManager.Instance != null)
-            await VoiceManager.Instance.JoinVoiceChannel("GameRoom");
     }
 
     [ServerRpc]
@@ -174,31 +153,17 @@ public class NetworkPlayerController : NetworkBehaviour
         {
             HandleLook();
             HandleMovement();
-            HandleCursorToggle();
 
             // Calcular valores de animacion y enviar al server
-            float rawH = RawInputH;
-            float rawV = RawInputV;
-            float targetMoveX, targetMoveZ;
-
-            if (IsSprinting && (Mathf.Abs(rawH) > 0.01f || Mathf.Abs(rawV) > 0.01f))
-            {
-                targetMoveX = rawH;
-                targetMoveZ = Mathf.Clamp(rawV * 2f, -1f, 1f);
-            }
-            else
-            {
-                targetMoveX = rawH * 0.5f;
-                targetMoveZ = rawV * 0.5f;
-            }
-
-            // Enviar al servidor para que todos vean las animaciones
-            SyncAnimationServerRpc(targetMoveX, targetMoveZ, IsGrounded, IsJumping);
+            SyncAnimationServerRpc(RawInputH * (IsSprinting ? 1f : 0.5f), RawInputV * (IsSprinting ? 1f : 0.5f), IsGrounded, IsJumping);
         }
     }
 
     void HandleLook()
     {
+        // BLOQUEO DE ROTACION SI SETTINGS ESTA ABIERTO
+        if (UIVoice.Instance != null && UIVoice.Instance.IsSettingsOpen) return;
+
         float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
         float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;
 
@@ -210,6 +175,9 @@ public class NetworkPlayerController : NetworkBehaviour
 
     void HandleMovement()
     {
+        // Opcional: Bloquear movimiento en settings
+        if (UIVoice.Instance != null && UIVoice.Instance.IsSettingsOpen) return;
+
         IsGrounded = controller.isGrounded;
 
         if (IsGrounded && !wasGrounded)
@@ -225,7 +193,7 @@ public class NetworkPlayerController : NetworkBehaviour
         InputV = Input.GetAxisRaw("Vertical");
         RawInputH = Input.GetAxisRaw("Horizontal");
         RawInputV = Input.GetAxisRaw("Vertical");
-        IsSprinting = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+        IsSprinting = Input.GetKey(KeyCode.LeftShift);
 
         float currentSpeed = IsSprinting ? runSpeed : walkSpeed;
 
@@ -244,18 +212,14 @@ public class NetworkPlayerController : NetworkBehaviour
         controller.Move(velocity * Time.deltaTime);
     }
 
-    void HandleCursorToggle()
-    {
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
-        }
-    }
-
     public void SetSpeaking(bool speaking)
     {
         if (floatingNameInstance != null)
             floatingNameInstance.SetSpeaking(speaking);
+    }
+
+    void HandleCursorToggle()
+    {
+        // Esta funcion se ha movido a UIVoice para centralizar el menu de Settings
     }
 }

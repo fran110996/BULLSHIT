@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using Unity.Services.Vivox;
 using System.Threading.Tasks;
 using System.Collections.Generic;
@@ -159,6 +159,20 @@ public class VoiceManager : MonoBehaviour
         
         // Actualizar UI si existe
         UIVoice.Instance?.SetMuteIcon(isMuted);
+    }
+
+    public void SetInputVolume(int volume)
+    {
+        // Vivox usa un rango de -50 a 50 o 0 a 100 dependiendo de la version.
+        // En Unity.Services.Vivox suele ser 0-100.
+        VivoxService.Instance.SetInputDeviceVolume(volume);
+        Debug.Log($"Voz: Volumen de entrada ajustado a {volume}");
+    }
+
+    public void SetOutputVolume(int volume)
+    {
+        VivoxService.Instance.SetOutputDeviceVolume(volume);
+        Debug.Log($"Voz: Volumen de salida ajustado a {volume}");
     }
 
     public void RegisterPlayer(string playerName, NetworkPlayerController controller)

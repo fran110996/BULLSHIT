@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using Steamworks;
 using System.Collections.Generic;
 
@@ -73,6 +73,12 @@ public class SteamLobbyManager : MonoBehaviour
     {
         CurrentLobbyID = new CSteamID(cb.m_ulSteamIDLobby);
         Debug.Log($"✓ Entré al lobby. Soy host: {IsHost}");
+        
+        if (IsHost)
+        {
+            SetMemberReady(true);
+        }
+
         LobbyUIManager.Instance?.OnLobbyReady();
 
         if (!IsHost)
@@ -146,6 +152,45 @@ public class SteamLobbyManager : MonoBehaviour
             SteamMatchmaking.LeaveLobby(CurrentLobbyID);
     }
 
+    public static Texture2D GetSteamAvatar(CSteamID id)
+    {
+        int avatarInt = SteamFriends.GetMediumFriendAvatar(id);
+        if (avatarInt == -1) return null;
+
+        SteamUtils.GetImageSize(avatarInt, out uint width, out uint height);
+
+        if (width > 0 && height > 0)
+        {
+            byte[] avatarStream = new byte[4 * (int)width * (int)height];
+            SteamUtils.GetImageRGBA(avatarInt, avatarStream, (int)(4 * width * height));
+
+            Texture2D texture = new Texture2D((int)width, (int)height, TextureFormat.RGBA32, false);
+            texture.LoadRawTextureData(avatarStream);
+            texture.Apply();
+
+            // Los avatares de Steam vienen invertidos verticalmente
+            return FlipTexture(texture);
+        }
+
+        return null;
+    }
+
+    private static Texture2D FlipTexture(Texture2D original)
+    {
+        Texture2D flipped = new Texture2D(original.width, original.height);
+        int xN = original.width;
+        int yN = original.height;
+
+        for (int i = 0; i < xN; i++)
+        {
+            for (int j = 0; j < yN; j++)
+            {
+                flipped.SetPixel(i, yN - j - 1, original.GetPixel(i, j));
+            }
+        }
+        flipped.Apply();
+        return flipped;
+    }
 
     void OnApplicationPause(bool paused)
     {

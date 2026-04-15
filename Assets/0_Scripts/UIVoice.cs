@@ -16,9 +16,13 @@ public class UIVoice : MonoBehaviour
     [Header("Settings (abre con ESC)")]
     public GameObject settingsPanel;
     public TMP_Dropdown microphoneDropdown;
+    public Slider inputVolumeSlider; // Deslizador para m microfono
+    public Slider outputVolumeSlider; // Deslizador para los demas
 
     private bool isMuted = false;
     private bool settingsOpen = false;
+
+    public bool IsSettingsOpen => settingsOpen;
 
     void Awake()
     {
@@ -30,6 +34,24 @@ public class UIVoice : MonoBehaviour
     {
         settingsPanel.SetActive(false);
         SetMuteIcon(false);
+        
+        // Configurar Sliders
+        if (inputVolumeSlider != null)
+        {
+            inputVolumeSlider.minValue = 0;
+            inputVolumeSlider.maxValue = 100;
+            inputVolumeSlider.value = 80; // Valor inicial razonable
+            inputVolumeSlider.onValueChanged.AddListener(OnInputVolumeChanged);
+        }
+
+        if (outputVolumeSlider != null)
+        {
+            outputVolumeSlider.minValue = 0;
+            outputVolumeSlider.maxValue = 100;
+            outputVolumeSlider.value = 80;
+            outputVolumeSlider.onValueChanged.AddListener(OnOutputVolumeChanged);
+        }
+
         await PopulateMicrophoneList();
     }
 
@@ -51,8 +73,6 @@ public class UIVoice : MonoBehaviour
         settingsOpen = !settingsOpen;
         settingsPanel.SetActive(settingsOpen);
 
-        // Cuando abre settings, liberar cursor
-        // Cuando cierra, volver a bloquear si estamos en juego
         if (settingsOpen)
         {
             Cursor.lockState = CursorLockMode.None;
@@ -60,9 +80,20 @@ public class UIVoice : MonoBehaviour
         }
         else
         {
-            Cursor.lockState = CursorLockMode.Confined;
+            // Bloquear y esconder el cursor al cerrar
+            Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
         }
+    }
+
+    private void OnInputVolumeChanged(float value)
+    {
+        VoiceManager.Instance?.SetInputVolume((int)value);
+    }
+
+    private void OnOutputVolumeChanged(float value)
+    {
+        VoiceManager.Instance?.SetOutputVolume((int)value);
     }
 
     private async Task PopulateMicrophoneList()
@@ -86,6 +117,7 @@ public class UIVoice : MonoBehaviour
 
     private void OnMicrophoneChanged(int index)
     {
-        Debug.Log($"Microfono seleccionado: {Microphone.devices[index]}");
+        if (index < Microphone.devices.Length)
+            Debug.Log($"Microfono seleccionado: {Microphone.devices[index]}");
     }
 }

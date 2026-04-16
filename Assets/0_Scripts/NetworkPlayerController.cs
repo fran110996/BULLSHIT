@@ -161,8 +161,9 @@ public class NetworkPlayerController : NetworkBehaviour
 
     void HandleLook()
     {
-        // BLOQUEO DE ROTACION SI SETTINGS ESTA ABIERTO
-        if (UIVoice.Instance != null && UIVoice.Instance.IsSettingsOpen) return;
+        // BLOQUEO DE ROTACION SI SETTINGS O MISIONES ESTA ABIERTO
+        if ((UIVoice.Instance != null && UIVoice.Instance.IsSettingsOpen) || 
+            (PhotoMissionUI.Instance != null && PhotoMissionUI.Instance.IsUIOpen)) return;
 
         float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
         float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;

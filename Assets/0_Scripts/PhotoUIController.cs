@@ -89,23 +89,54 @@ public class PhotoUIController : MonoBehaviour
         mainVisuals.transform.localScale = endScale;
     }
 
+    private Coroutine flashCoroutine;
+
     public void TriggerFlash()
     {
-        StopCoroutine("FlashRoutine");
-        StartCoroutine(FlashRoutine());
+        if (flashGroup == null)
+        {
+            Debug.LogWarning("[PhotoUIController] Intentando disparar flash pero flashGroup es nulo.");
+            return;
+        }
+
+        // Verificar que haya una imagen para mostrar el color blanco
+        Image img = flashGroup.GetComponent<Image>();
+        if (img == null)
+        {
+            Debug.LogError("[PhotoUIController] El objeto FlashGroup NO tiene un componente Image. ¡No se verá nada!");
+        }
+        
+        // Asegurarnos de que el flash esté por delante de todo lo demás en su Canvas
+        flashGroup.transform.SetAsLastSibling();
+        flashGroup.gameObject.SetActive(true);
+        flashGroup.alpha = 1f; // Forzar alpha 1 inmediatamente
+        
+        Debug.Log($"[PhotoUIController] Flash iniciado. Duración: {flashDuration}s. Objeto: {flashGroup.name}");
+        
+        if (flashCoroutine != null) StopCoroutine(flashCoroutine);
+        flashCoroutine = StartCoroutine(FlashRoutine());
     }
 
     private IEnumerator FlashRoutine()
     {
+        float effectiveDuration = Mathf.Max(flashDuration, 0.2f);
+        
         flashGroup.alpha = 1f;
+        
+        // Mantener el brillo máximo un instante para que sea perceptible
+        yield return new WaitForSeconds(0.05f);
+
         float elapsed = 0f;
-        while (elapsed < flashDuration)
+        while (elapsed < effectiveDuration)
         {
             elapsed += Time.deltaTime;
-            flashGroup.alpha = Mathf.Lerp(1f, 0f, elapsed / flashDuration);
+            flashGroup.alpha = Mathf.Lerp(1f, 0f, elapsed / effectiveDuration);
             yield return null;
         }
+        
         flashGroup.alpha = 0f;
+        flashGroup.gameObject.SetActive(false);
+        flashCoroutine = null;
     }
 
     private IEnumerator BlinkRECRoutine()
